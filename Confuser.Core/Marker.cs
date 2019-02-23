@@ -52,7 +52,7 @@ namespace Confuser.Core {
 		/// <param name="settings">The settings.</param>
 		void FillPreset(ProtectionPreset preset, ProtectionSettings settings) {
 			foreach (Protection prot in protections.Values)
-				if (prot.Preset <= preset && !settings.ContainsKey(prot))
+				if (prot.Preset != ProtectionPreset.None && prot.Preset <= preset && !settings.ContainsKey(prot))
 					settings.Add(prot, new Dictionary<string, string>());
 		}
 
@@ -197,8 +197,9 @@ namespace Confuser.Core {
 		/// <param name="context">The working context.</param>
 		/// <param name="target">The target definition.</param>
 		/// <param name="rules">The rules.</param>
-		protected void ApplyRules(ConfuserContext context, IDnlibDef target, Rules rules) {
-			var ret = new ProtectionSettings();
+		/// <param name="baseSettings">The base settings.</param>
+		protected void ApplyRules(ConfuserContext context, IDnlibDef target, Rules rules, ProtectionSettings baseSettings = null) {
+			var ret = baseSettings == null ? new ProtectionSettings() : new ProtectionSettings(baseSettings);
 			foreach (var i in rules) {
 				if (!(bool)i.Value.Evaluate(target)) continue;
 

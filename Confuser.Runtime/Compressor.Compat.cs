@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Confuser.Runtime {
-	internal static class Compressor {
+	internal static class CompressorCompat {
 		static byte[] key;
 
 		static GCHandle Decrypt(uint[] data, uint seed) {
@@ -50,22 +50,18 @@ namespace Confuser.Runtime {
 			var l = (uint)Mutation.KeyI0;
 			uint[] q = Mutation.Placeholder(new uint[Mutation.KeyI0]);
 
-			Assembly a = Assembly.GetExecutingAssembly();
-			Module n = a.ManifestModule;
 			GCHandle h = Decrypt(q, (uint)Mutation.KeyI1);
 			var b = (byte[])h.Target;
-			Module m = a.LoadModule("koi", b);
+			Assembly a = Assembly.Load(b);
 			Array.Clear(b, 0, b.Length);
 			h.Free();
 			Array.Clear(q, 0, q.Length);
 
-			key = n.ResolveSignature(Mutation.KeyI2);
+			var m = typeof(CompressorCompat).Module;
+			key = m.ResolveSignature(Mutation.KeyI2);
 			AppDomain.CurrentDomain.AssemblyResolve += Resolve;
 
-			// For some reasons, reflection on Assembly would not discover the types unless GetTypes is called.
-			m.GetTypes();
-
-			MethodBase e = m.ResolveMethod(key[0] | (key[1] << 8) | (key[2] << 16) | (key[3] << 24));
+			MethodBase e = a.ManifestModule.ResolveMethod(key[0] | (key[1] << 8) | (key[2] << 16) | (key[3] << 24));
 			var g = new object[e.GetParameters().Length];
 			if (g.Length != 0)
 				g[0] = args;

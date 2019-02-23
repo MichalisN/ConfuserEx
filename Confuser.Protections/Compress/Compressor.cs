@@ -16,6 +16,7 @@ using dnlib.DotNet.MD;
 using dnlib.DotNet.Writer;
 using dnlib.PE;
 using FileAttributes = dnlib.DotNet.FileAttributes;
+using SR = System.Reflection;
 
 namespace Confuser.Protections {
 	internal class Compressor : Packer {
@@ -55,8 +56,17 @@ namespace Confuser.Protections {
 
 			ModuleDefMD originModule = context.Modules[ctx.ModuleIndex];
 			ctx.OriginModuleDef = originModule;
+
 			var stubModule = new ModuleDefUser(ctx.ModuleName, originModule.Mvid, originModule.CorLibTypes.AssemblyRef);
-			ctx.Assembly.Modules.Insert(0, stubModule);
+			if (ctx.CompatMode) {
+				var assembly = new AssemblyDefUser(originModule.Assembly);
+				assembly.Name += ".cr";
+				assembly.Modules.Add(stubModule);
+			}
+			else {
+				ctx.Assembly.Modules.Insert(0, stubModule);
+				ImportAssemblyTypeReferences(originModule, stubModule);
+			}
 			stubModule.Characteristics = originModule.Characteristics;
 			stubModule.Cor20HeaderFlags = originModule.Cor20HeaderFlags;
 			stubModule.Cor20HeaderRuntimeVersion = originModule.Cor20HeaderRuntimeVersion;
@@ -69,7 +79,6 @@ namespace Confuser.Protections {
 			stubModule.RuntimeVersion = originModule.RuntimeVersion;
 			stubModule.TablesHeaderVersion = originModule.TablesHeaderVersion;
 			stubModule.Win32Resources = originModule.Win32Resources;
-			ImportAssemblyTypeReferences(originModule, stubModule);
 
 			InjectStub(context, ctx, parameters, stubModule);
 
@@ -83,7 +92,7 @@ namespace Confuser.Protections {
 			}
 		}
 
-		static string GetName(byte[] module) {
+		static string GetId(byte[] module) {
 			var md = MetaDataCreator.CreateMetaData(new PEImage(module));
 			var assemblyRow = md.TablesStream.ReadAssemblyRow(1);
 			var assembly = new AssemblyNameInfo();
@@ -93,7 +102,11 @@ namespace Confuser.Protections {
 			assembly.HashAlgId = (AssemblyHashAlgorithm)assemblyRow.HashAlgId;
 			assembly.Version = new Version(assemblyRow.MajorVersion, assemblyRow.MinorVersion, assemblyRow.BuildNumber, assemblyRow.RevisionNumber);
 			assembly.Attributes = (AssemblyAttributes)assemblyRow.Flags;
-			return assembly.Name;
+			return GetId(assembly);
+		}
+
+		static string GetId(IAssembly assembly) {
+			return new SR.AssemblyName(assembly.FullName).FullName.ToUpperInvariant();
 		}
 
 		void PackModules(ConfuserContext context, CompressorContext compCtx, ModuleDef stubModule, ICompressionService comp, RandomGenerator random) {
@@ -103,15 +116,15 @@ namespace Confuser.Protections {
 				if (i == compCtx.ModuleIndex)
 					continue;
 
-				string name = context.Modules[i].Assembly.Name.ToUpperInvariant();
-				modules.Add(name, context.OutputModules[i]);
+				string id = GetId(context.Modules[i].Assembly);
+				modules.Add(id, context.OutputModules[i]);
 
-				int strLen = Encoding.UTF8.GetByteCount(name);
+				int strLen = Encoding.UTF8.GetByteCount(id);
 				if (strLen > maxLen)
 					maxLen = strLen;
 			}
 			foreach (var extModule in context.ExternalModules) {
-				var name = GetName(extModule).ToUpperInvariant();
+				var name = GetId(extModule).ToUpperInvariant();
 				modules.Add(name, extModule);
 
 				int strLen = Encoding.UTF8.GetByteCount(name);
@@ -181,7 +194,9 @@ namespace Confuser.Protections {
 			var rt = context.Registry.GetService<IRuntimeService>();
 			RandomGenerator random = context.Registry.GetService<IRandomService>().GetRandomGenerator(Id);
 			var comp = context.Registry.GetService<ICompressionService>();
-			IEnumerable<IDnlibDef> defs = InjectHelper.Inject(rt.GetRuntimeType("Confuser.Runtime.Compressor"), stubModule.GlobalType, stubModule);
+
+			var rtType = rt.GetRuntimeType(compCtx.CompatMode ? "Confuser.Runtime.CompressorCompat" : "Confuser.Runtime.Compressor");
+			IEnumerable<IDnlibDef> defs = InjectHelper.Inject(rtType, stubModule.GlobalType, stubModule);
 
 			switch (parameters.GetParameter(context, context.CurrentModule, "key", Mode.Normal)) {
 				case Mode.Normal:
@@ -291,7 +306,7 @@ namespace Confuser.Protections {
 					ctx.KeyToken = sigToken;
 					MutationHelper.InjectKey(writer.Module.EntryPoint, 2, (int)sigToken);
 				}
-				else if (evt == ModuleWriterEvent.MDBeginAddResources) {
+				else if (evt == ModuleWriterEvent.MDBeginAddResources && !ctx.CompatMode) {
 					// Compute hash
 					byte[] hash = SHA1.Create().ComputeHash(ctx.OriginModule);
 					uint hashBlob = writer.MetaData.BlobHeap.Add(hash);
